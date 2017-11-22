@@ -47,24 +47,24 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         otherAdapter=new OtherAdapter();
         draggridview.setNumColumns(3);
         other_draggridview.setNumColumns(3);
+        draggridview.setDragEnable(true);
+        draggridview.setAdapter(myAdapter);
+        other_draggridview.setAdapter(otherAdapter);
     }
 
     private void loadData() {
-        for (int i = 0; i < 10; i++) {
+        for (int i = 0; i < 15; i++) {
             Item item = new Item();
             item.title = "频道" + i;
             data.add(item);
         }
-        for (int i = 0; i < 10; i++) {
-            Item item = new Item();
-            item.title = "Other频道" + i;
-            dataOther.add(item);
-        }
+//        for (int i = 0; i < 20; i++) {
+//            Item item = new Item();
+//            item.title = "Other频道" + i;
+//            dataOther.add(item);
+//        }
         myAdapter.setData(data);
         otherAdapter.setData(dataOther);
-
-        draggridview.setAdapter(myAdapter);
-        other_draggridview.setAdapter(otherAdapter);
     }
 
     @Override
@@ -72,6 +72,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         switch (view.getId()) {
             case R.id.tv_change:
                 Log.i(TAG, "onClick: tv_change");
+                draggridview.requestLayout();
                 break;
         }
     }
@@ -102,6 +103,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         //然后重写getView
         @Override
         public View getView(int position, View convertView, ViewGroup parent) {
+//            Log.i(TAG, "MyAdapter getView position=="+position);
             ViewHolder holder;
             if (convertView == null) {
                 holder = new ViewHolder();
@@ -142,6 +144,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         //然后重写getView
         @Override
         public View getView(int position, View convertView, ViewGroup parent) {
+//            Log.i(TAG, "OtherAdapter getView position=="+position);
             ViewHolder holder;
             if (convertView == null) {
                 holder = new ViewHolder();

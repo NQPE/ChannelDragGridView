@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:orientation="vertical" android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:clipChildren="false">
     <ScrollView
         android:layout_width="match_parent"
-        android:layout_height="match_parent">
+        android:layout_height="match_parent"
+        android:clipChildren="false">
         <RelativeLayout
             android:layout_width="match_parent"
             android:layout_height="match_parent"
@@ -35,6 +37,8 @@
                     android:id="@+id/other_draggridview"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
+                    android:listSelector="@android:color/transparent"
+                    android:visibility="gone"
                     android:paddingBottom="10dp" />
             </LinearLayout>
 
@@ -87,6 +91,7 @@
                     android:id="@+id/draggridview"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
+                    android:listSelector="@android:color/transparent"
                     android:paddingBottom="10dp" />
             </LinearLayout>
 

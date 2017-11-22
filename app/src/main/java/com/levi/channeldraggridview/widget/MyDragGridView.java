@@ -79,11 +79,12 @@ public class MyDragGridView extends ViewGroup {
     //K 为itemview V 为itemview对应的信息
     HashMap<View, InfoAttachItemView> mMapInfoItemView;
     //K 为position V 为对应的坐标信息
-    HashMap<Integer, XYAttachPosition> mMapXYPosition ;
+    HashMap<Integer, XYAttachPosition> mMapXYPosition;
     //最小滑动距离
     int mTouchSlop;
     //是否可拖动控件切换的监听
     OnDragEnableListener mOnDragEnableListener;
+
     /**
      * item挤压移动 动画持续时间
      * 默认200
