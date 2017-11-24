@@ -1,15 +1,14 @@
 package com.levi.channeldraggridview.widget;
 
 import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
 import android.animation.AnimatorSet;
 import android.animation.ValueAnimator;
 import android.content.Context;
-import android.database.DataSetObserver;
 import android.graphics.Point;
 import android.os.Handler;
 import android.os.Message;
 import android.support.annotation.IntDef;
-import android.support.v4.view.MotionEventCompat;
 import android.support.v4.view.ViewCompat;
 import android.util.AttributeSet;
 import android.util.DisplayMetrics;
@@ -27,14 +26,13 @@ import java.io.Serializable;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 
 /**
  * Created by levi on 2017/11/21.
  * 频道拖动的gridview
  */
-public class ChannelDragGridView extends GridView {
+public class ChannelDragGridView<T> extends GridView {
     public static final String TAG = "TAG_ChannelDragGridView";
     /**
      * item处于可滑动状态 但是未滑动
@@ -58,8 +56,6 @@ public class ChannelDragGridView extends GridView {
     //最小滑动距离
     int mTouchSlop;
 
-
-    DragingGridItem mDragingGridItem=new DragingGridItem();
     //整个viewgroup控件是否可拖动
     boolean mDragEnable = false;
     //记录down接触点的坐标
@@ -75,6 +71,8 @@ public class ChannelDragGridView extends GridView {
 
     //拖动item与其他item重叠范围判断
     float mOverlapScale=1/8;
+    //识别手指按住item的范围判断
+    float mFindTopChildUnderScale=1/3;
 
     /**
      * item挤压移动 动画持续时间
@@ -86,9 +84,18 @@ public class ChannelDragGridView extends GridView {
      * 包含view和data绑定的item容器
      *
      */
-    List<ItemDragViewData> mItemDragViewDatas=new ArrayList<>();
+    List<ItemDragViewData<T>> mItemDragViewDatas=new ArrayList<>();
 
-    DragGridItemAdapter mAdapter;
+    //当前拖动的mDragingGridItem
+    ItemDragViewData<T> mDragingGridItem;
+
+    //存储各个item的顶点坐标的位置
+    List<Point> mDragingGridXYPosition=new ArrayList<>();
+
+    DragGridItemAdapter<T> mAdapter;
+
+    //处理长按改变拖拽状态时无缝拖拽view的问题
+    boolean mLongClickDragEnable;
 
     @IntDef({STATE_DRAG_ENABLE, STATE_DRAG_DISABLE, STATE_DRAG_ING})
     @Retention(RetentionPolicy.SOURCE)
@@ -180,8 +187,8 @@ public class ChannelDragGridView extends GridView {
 
     @Override
     protected void onLayout(boolean changed, int l, int t, int r, int b) {
+        Log.i(TAG, "onLayout changed=="+changed);
         super.onLayout(changed, l, t, r, b);
-        Log.i(TAG, "onLayout");
         handleOnLayout();
     }
 
@@ -191,24 +198,28 @@ public class ChannelDragGridView extends GridView {
     private void handleOnLayout() {
         int childCount=getChildCount();
         if (childCount<=0)return;
-        //只需要第一次执行创建操作就行
-        if (mItemDragViewDatas.size()>0)return;
+        mDragingGridItem=null;
         mItemDragViewDatas.clear();
+        mDragingGridXYPosition.clear();
         for (int i=0;i<childCount;i++){
 
             ItemDragViewData itemDragViewData=new ItemDragViewData();
             itemDragViewData.itemView=getChildAt(i);
-            itemDragViewData.itemState=mDisableDragCount>(i+1)?STATE_DRAG_DISABLE:STATE_DRAG_ENABLE;
+            itemDragViewData.itemViewPosition=i;
             if (mAdapter!=null&&mAdapter.getData().size()==childCount){
                 itemDragViewData.itemData=mAdapter.getData().get(i);
             }
             if (i==0){
                 mItemHeight = itemDragViewData.itemView.getMeasuredHeight();
                 mItemWidth = itemDragViewData.itemView.getMeasuredWidth();
-                Log.i(TAG, "handleOnLayout: mItemWidth=="+mItemWidth);
-                Log.i(TAG, "handleOnLayout: mItemHeight=="+mItemHeight);
+//                Log.i(TAG, "handleOnLayout: mItemWidth=="+mItemWidth);
+//                Log.i(TAG, "handleOnLayout: mItemHeight=="+mItemHeight);
             }
-            Log.i(TAG, "handleOnLayout: i=="+i+"x=="+itemDragViewData.itemView.getLeft()+"y=="+itemDragViewData.itemView.getTop());
+//            Log.i(TAG, "handleOnLayout: i=="+i+"x=="+itemDragViewData.itemView.getLeft()+"y=="+itemDragViewData.itemView.getTop());
+            Point point=new Point();
+            point.x=itemDragViewData.itemView.getLeft();
+            point.y=itemDragViewData.itemView.getTop();
+            mDragingGridXYPosition.add(point);
             mItemDragViewDatas.add(itemDragViewData);
         }
     }
@@ -233,13 +244,13 @@ public class ChannelDragGridView extends GridView {
 //        Log.i(TAG, "getChildDrawingOrder");
         //重写此方法  让选择的itemview 绘制顺序在最后
         // 方便移动时 覆盖到其他itemview的上方
-        if (mDragingGridItem.mDragGridItemView == null) {
+        if (mDragingGridItem == null) {
             return i;
         }
-        if (i == indexOfChild(mDragingGridItem.mDragGridItemView)) {
+        if (i == indexOfChild(mDragingGridItem.itemView)) {
             return childCount - 1;
         } else if (i == childCount - 1) {
-            return indexOfChild(mDragingGridItem.mDragGridItemView);
+            return indexOfChild(mDragingGridItem.itemView);
         } else {
             return i;
         }
@@ -253,6 +264,22 @@ public class ChannelDragGridView extends GridView {
      */
     private boolean handleDispatchTouchEvent(MotionEvent ev) {
 //        Log.i(TAG, "handleDispatchTouchEvent");
+        /**
+         * 处理因为长按而改变拖拽状态时 itemview无法无缝连接的成为拖动的itemview
+         * 必须还要抬手再次触摸滑动才可拖动的问题
+         *
+         * 重新dispatch一次down事件，使得拖拽itemview可以无缝拖拽
+         *
+         */
+        if (mLongClickDragEnable){
+//            Log.i(TAG,"mLongClickDragEnable");
+            mLongClickDragEnable=false;
+            // 重新dispatch一次down事件，使得拖拽itemview可以无缝拖拽
+            int oldAction = ev.getAction();
+            ev.setAction(MotionEvent.ACTION_DOWN);
+            dispatchTouchEvent(ev);
+            ev.setAction(oldAction);
+        }
         return super.dispatchTouchEvent(ev);
     }
 
@@ -265,7 +292,7 @@ public class ChannelDragGridView extends GridView {
      * @return
      */
     private boolean handleOnInterceptTouchEvent(MotionEvent ev) {
-        Log.i(TAG, "handleOnInterceptTouchEvent");
+//        Log.i(TAG, "handleOnInterceptTouchEvent");
         if (!mDragEnable)return false;
         //获取action
         final int action = ev.getActionMasked();
@@ -275,10 +302,7 @@ public class ChannelDragGridView extends GridView {
                 final float x = ev.getX();
                 final float y = ev.getY();
                 findTopChildUnder((int) x, (int) y);
-                if (checkDisableDrag(mDragingGridItem.mDragGridItemViewPosition)){
-                    mDragingGridItem.mDragGridItemView=null;
-                }
-                if (mDragingGridItem.mDragGridItemView != null) {
+                if (mDragingGridItem!= null) {
                     if (getParent()!=null){
                         getParent().requestDisallowInterceptTouchEvent(true);
                     }
@@ -289,7 +313,7 @@ public class ChannelDragGridView extends GridView {
                 mDownY=y;
                 break;
             case MotionEvent.ACTION_MOVE:
-                Log.i(TAG, "handleOnInterceptTouchEvent ACTION_MOVE");
+//                Log.i(TAG, "handleOnInterceptTouchEvent ACTION_MOVE");
                 if (checkTouchSlop(ev.getX(),ev.getY())){
                     return true;
                 }
@@ -310,17 +334,14 @@ public class ChannelDragGridView extends GridView {
         final int childCount = mItemDragViewDatas.size();
         for (int i = childCount - 1; i >= 0; i--) {
             final View child = mItemDragViewDatas.get(i).itemView;
-            if (x >= child.getLeft() && x < child.getRight() &&
-                    y >= child.getTop() && y < child.getBottom()) {
-                mDragingGridItem.mDragGridItemViewPosition=i;
-                mDragingGridItem.mDragGridItemView =child;
-                mDragingGridItem.left=getLeft();
-                mDragingGridItem.top=getTop();
+            if (x >= child.getLeft()*(1-mFindTopChildUnderScale) && x < child.getRight()*(1-mFindTopChildUnderScale) &&
+                    y >= child.getTop()*(1-mFindTopChildUnderScale) && y < child.getBottom()*(1-mFindTopChildUnderScale)) {
+                if (checkDisableDrag(i))continue;
+                mDragingGridItem=mItemDragViewDatas.get(i);
                 return ;
             }
         }
-        mDragingGridItem.mDragGridItemView=null;
-        mDragingGridItem.mDragGridItemViewPosition=CODE_UNKNOW;
+        mDragingGridItem=null;
         return ;
     }
 
@@ -359,15 +380,15 @@ public class ChannelDragGridView extends GridView {
                 final float x = ev.getX()-mItemWidth/2;
                 final float y = ev.getY()-mItemHeight/2;
 
-                if (mDragingGridItem.mDragGridItemView != null) {
+                if (mDragingGridItem != null) {
                     //拖拽至指定位置
-                    dragTo(mDragingGridItem.mDragGridItemView.getLeft(), mDragingGridItem.mDragGridItemView.getTop(), (int) x, (int) y);
+                    dragTo(mDragingGridItem.itemView.getLeft(), mDragingGridItem.itemView.getTop(), (int) x, (int) y);
                     //处理挤压动画
                     handleMoveAnimation();
                 }
                 break;
             case MotionEvent.ACTION_UP:
-//                handleUpAnimation();
+                handleUpAnimation();
                 break;
         }
 
@@ -385,11 +406,11 @@ public class ChannelDragGridView extends GridView {
     private void dragTo(int left, int top, int dx, int dy) {
         if (dx != 0) {
             //移动View
-            ViewCompat.offsetLeftAndRight(mDragingGridItem.mDragGridItemView, dx - left);
+            ViewCompat.offsetLeftAndRight(mDragingGridItem.itemView, dx - left);
         }
         if (dy != 0) {
             //移动View
-            ViewCompat.offsetTopAndBottom(mDragingGridItem.mDragGridItemView, dy - top);
+            ViewCompat.offsetTopAndBottom(mDragingGridItem.itemView, dy - top);
         }
 
     }
@@ -411,13 +432,13 @@ public class ChannelDragGridView extends GridView {
      * 处理挤压的移动动画
      */
     private void handleMoveAnimation() {
-        if (mDragingGridItem.mDragGridItemView == null) return;
-        int overlapPosition = getOverlapPosition(mDragingGridItem.mDragGridItemView);
+        if (mDragingGridItem==null||mDragingGridItem.itemView == null) return;
+        int overlapPosition = getOverlapPosition(mDragingGridItem.itemView);
         if (overlapPosition==CODE_UNKNOW)return;
-        if (overlapPosition==mDragingGridItem.mDragGridItemViewPosition)return;
+        if (overlapPosition==mDragingGridItem.itemViewPosition)return;
         Log.i(TAG, "handleMoveAnimation: overlapPosition=="+overlapPosition);
-        AnimatorSet animatorSet=createMoveAnimation(overlapPosition,mDragingGridItem.mDragGridItemViewPosition);
-        handleMoveData(overlapPosition,mDragingGridItem.mDragGridItemViewPosition);
+        AnimatorSet animatorSet=createMoveAnimation(overlapPosition,mDragingGridItem.itemViewPosition);
+        handleMoveData(overlapPosition,mDragingGridItem.itemViewPosition);
         Message msg=new Message();
         msg.obj=animatorSet;
         handlerMoveAnimation.sendMessageDelayed(msg,mMoveAnimDuration);
@@ -458,8 +479,15 @@ public class ChannelDragGridView extends GridView {
      * @param itemPosition
      */
     private void handleMoveData(int overlapPosition, int itemPosition) {
-        mDragingGridItem.mDragGridItemViewPosition=overlapPosition;
         mItemDragViewDatas.add(overlapPosition,mItemDragViewDatas.remove(itemPosition));
+        //同步adapter的data数据
+        mAdapter.getData().add(overlapPosition,mAdapter.getData().remove(itemPosition));
+
+        for (int i=0,len=mItemDragViewDatas.size();i<len;i++){
+            //改变itemdata里面的逻辑位置
+            mItemDragViewDatas.get(i).itemViewPosition=i;
+        }
+        mDragingGridItem=mItemDragViewDatas.get(overlapPosition);
     }
 
     /**
@@ -472,12 +500,12 @@ public class ChannelDragGridView extends GridView {
     private ValueAnimator creatValueAnimator(final View itemview, final int beforepos, int afterpos) {
         ValueAnimator animator = ValueAnimator.ofFloat(0, 1);
         animator.setTarget(itemview);
-        int after_left=afterpos==mDragingGridItem.mDragGridItemViewPosition?mDragingGridItem.left:mItemDragViewDatas.get(afterpos).itemView.getLeft();
-        int after_top=afterpos==mDragingGridItem.mDragGridItemViewPosition?mDragingGridItem.top:mItemDragViewDatas.get(afterpos).itemView.getTop();
-        final int l = mItemDragViewDatas.get(beforepos).itemView.getLeft();
-        final int offset_l =after_left- mItemDragViewDatas.get(beforepos).itemView.getLeft();
-        final int t = mItemDragViewDatas.get(beforepos).itemView.getTop();
-        final int offset_t =after_top-mItemDragViewDatas.get(beforepos).itemView.getTop();
+        int after_left=mDragingGridXYPosition.get(afterpos).x;
+        int after_top=mDragingGridXYPosition.get(afterpos).y;
+        final int l = mDragingGridXYPosition.get(beforepos).x;
+        final int t = mDragingGridXYPosition.get(beforepos).y;
+        final int offset_l =after_left- l;
+        final int offset_t =after_top-t;
         animator.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
             @Override
             public void onAnimationUpdate(ValueAnimator animation) {
@@ -531,18 +559,20 @@ public class ChannelDragGridView extends GridView {
         final int offset_l =afterX- l;
         final int t = itemview.getTop();
         final int offset_t = afterY-t;
-        Log.i(TAG,"offset_l=="+offset_l);
-        Log.i(TAG,"offset_t=="+offset_t);
-        Log.i(TAG,"l=="+l);
-        Log.i(TAG,"t=="+t);
-        Log.i(TAG,"afterX=="+afterX);
-        Log.i(TAG,"afterY=="+afterY);
+//        Log.i(TAG,"offset_l=="+offset_l);
+//        Log.i(TAG,"offset_t=="+offset_t);
+//        Log.i(TAG,"l=="+l);
+//        Log.i(TAG,"t=="+t);
+//        Log.i(TAG,"afterX=="+afterX);
+//        Log.i(TAG,"afterY=="+afterY);
         animator.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
             @Override
             public void onAnimationUpdate(ValueAnimator animation) {
                 float animatedFraction= (float) animation.getAnimatedValue();
-                itemview.setTranslationX(evaluateInt(animatedFraction, 0, offset_l));
-                itemview.setTranslationY(evaluateInt(animatedFraction, 0, offset_t));
+                ViewCompat.offsetLeftAndRight(itemview, l+(int) (offset_l*animatedFraction)-itemview.getLeft());
+                ViewCompat.offsetTopAndBottom(itemview, t+(int) (offset_t*animatedFraction)-itemview.getTop());
+//                itemview.setTranslationX(evaluateInt(animatedFraction, 0, offset_l));
+//                itemview.setTranslationY(evaluateInt(animatedFraction, 0, offset_t));
             }
         });
         return animator;
@@ -560,8 +590,8 @@ public class ChannelDragGridView extends GridView {
         int dragitemcentery = mDragGridItemView.getTop() + mItemHeight / 2;
         int lastPostion=mItemDragViewDatas.size()-1;
         for (int i=0;i<lastPostion+1;i++){
-            if (dragitemcenterx >= mItemDragViewDatas.get(i).itemView.getLeft() + mItemWidth *mOverlapScale && dragitemcenterx < mItemDragViewDatas.get(i).itemView.getLeft()+ mItemWidth * (1-mOverlapScale) &&
-                    dragitemcentery >= mItemDragViewDatas.get(i).itemView.getTop() + mItemHeight *mOverlapScale && dragitemcentery < mItemDragViewDatas.get(i).itemView.getTop() + mItemHeight * (1-mOverlapScale)) {
+            if (dragitemcenterx >= mDragingGridXYPosition.get(i).x + mItemWidth *mOverlapScale && dragitemcenterx < mDragingGridXYPosition.get(i).x+ mItemWidth * (1-mOverlapScale) &&
+                    dragitemcentery >= mDragingGridXYPosition.get(i).y + mItemHeight *mOverlapScale && dragitemcentery < mDragingGridXYPosition.get(i).y  + mItemHeight * (1-mOverlapScale)) {
                 position = i;
                 break;
             }
@@ -569,10 +599,10 @@ public class ChannelDragGridView extends GridView {
 
         if (position==CODE_UNKNOW){
             //超出下边界 也算是 覆盖在了最后一个item上
-            if (dragitemcentery>mItemDragViewDatas.get(lastPostion).itemView.getTop()+mItemHeight){
+            if (dragitemcentery>mDragingGridXYPosition.get(lastPostion).y +mItemHeight){
                 return lastPostion;
-            }else if (dragitemcenterx>mItemDragViewDatas.get(lastPostion).itemView.getLeft()+mItemWidth&&
-                    dragitemcentery>mItemDragViewDatas.get(lastPostion).itemView.getTop()){
+            }else if (dragitemcenterx>mDragingGridXYPosition.get(lastPostion).x+mItemWidth&&
+                    dragitemcentery>mDragingGridXYPosition.get(lastPostion).y){
                 //在最后一个item的右边 也算是覆盖
                 return lastPostion;
             }
@@ -585,6 +615,47 @@ public class ChannelDragGridView extends GridView {
 
         return position;
     }
+
+
+    /**
+     * 抬起手指 拖动的view复原
+     */
+    private void handleUpAnimation() {
+        if (mDragingGridItem==null||mDragingGridItem.itemView==null)return;
+        int position=mDragingGridItem.itemViewPosition;
+        creatMoveAnimator(mDragingGridItem.itemView,
+                mDragingGridXYPosition.get(position).x,
+                mDragingGridXYPosition.get(position).y)
+                .start();
+        mDragingGridItem = null;
+    }
+
+    /**
+     * 处理OnBindItemView
+     */
+    private void handleOnBindItemView() {
+        if (mAdapter==null)return;
+        for (int i=0,len=getChildCount();i<len;i++){
+            mAdapter.onBindView(this,mDragEnable,getChildAt(i), mAdapter.getData().get(i),getItemState(i));
+        }
+    }
+
+
+    /**
+     * 通过itemview 得到 item的data
+     * @param itemView
+     * @return
+     */
+    private T getItemDataByView(View itemView) {
+        T t=null;
+        for (int i=0,len=mItemDragViewDatas.size();i<len;i++){
+            if (mItemDragViewDatas.get(i).itemView == itemView){
+                t=  mItemDragViewDatas.get(i).itemData;
+                return t;
+            }
+        }
+        return null;
+    }
     /**=====================================公共方法start==================================*/
 
     @Override
@@ -595,7 +666,6 @@ public class ChannelDragGridView extends GridView {
         super.setAdapter(adapter);
         this.mAdapter= (DragGridItemAdapter) adapter;
     }
-
 
     /**
      * 设置data排序的前N个item固定不能拖动
@@ -621,11 +691,20 @@ public class ChannelDragGridView extends GridView {
      */
     public void setDragEnable(boolean enable){
         mDragEnable=enable;
-//        handleOnDragEnableListener();
-//        handleOnBindItemView();
-//        handleDispatchTouchEvent();
+        handleOnBindItemView();
+        if (mDragEnable){
+            mLongClickDragEnable=true;
+        }
     }
 
+    /**
+     * 得到item的状态
+     * @param position
+     * @return
+     */
+    public int getItemState(int position){
+        return checkDisableDrag(position)?STATE_DRAG_DISABLE:STATE_DRAG_ENABLE;
+    }
 
     /**
      * 得到是否是可拖动状态
@@ -633,6 +712,90 @@ public class ChannelDragGridView extends GridView {
      */
     public boolean getDragEnable(){
         return mDragEnable;
+    }
+
+    /**
+     * 得到数据容器
+     * @return
+     */
+    public List<ItemDragViewData<T>> getItemDragViewDatas(){
+        return mItemDragViewDatas;
+    }
+
+    public void addItem(T item){
+        mAdapter.getData().add(item);
+        mAdapter.notifyDataSetChanged();
+
+    }
+
+    public Point getPointByPosition(int position){
+        Point point=new Point();
+
+        return point;
+    }
+
+    public void removeItem(final View itemView){
+        final T t=getItemDataByView(itemView);
+        int overlapPosition=mItemDragViewDatas.size()-1;
+        int itemPosition=getOverlapPosition(itemView);
+        if (itemPosition==overlapPosition){
+            mAdapter.getData().remove(t);
+            mAdapter.notifyDataSetChanged();
+            return;
+        }
+        AnimatorSet animatorSet=createMoveAnimation(overlapPosition,itemPosition);
+        handleMoveData(overlapPosition,itemPosition);
+        animatorSet.addListener(new AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationStart(Animator animation) {
+                super.onAnimationStart(animation);
+                itemView.setVisibility(INVISIBLE);
+            }
+
+            @Override
+            public void onAnimationEnd(Animator animation) {
+                super.onAnimationEnd(animation);
+                itemView.setVisibility(VISIBLE);
+                if (t!=null){
+                    mAdapter.getData().remove(t);
+                    mAdapter.notifyDataSetChanged();
+                }
+            }
+        });
+        Message msg=new Message();
+        msg.obj=animatorSet;
+        handlerMoveAnimation.sendMessageDelayed(msg,0);
+    }
+
+    public void removeItemAnim(final View itemView,int x, int y){
+        final T t=getItemDataByView(itemView);
+        final int overlapPosition=mItemDragViewDatas.size()-1;
+        final int itemPosition=getOverlapPosition(itemView);
+        ValueAnimator animator=creatMoveAnimation(itemView,x,y);
+        animator.addListener(new AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationEnd(Animator animation) {
+                super.onAnimationEnd(animation);
+                if (t!=null){
+                    mAdapter.getData().remove(t);
+                    mAdapter.notifyDataSetChanged();
+                }
+
+            }
+
+            @Override
+            public void onAnimationStart(Animator animation) {
+                super.onAnimationStart(animation);
+                if (itemPosition==overlapPosition){
+                    return;
+                }
+                AnimatorSet animatorSet=createMoveAnimation(overlapPosition,itemPosition);
+                handleMoveData(overlapPosition,itemPosition);
+                animatorSet.start();
+            }
+        });
+        animator.start();
+
     }
 
 
@@ -643,15 +806,38 @@ public class ChannelDragGridView extends GridView {
 
     /**=====================================内部类及接口start==================================*/
 
-    public abstract static class DragGridItemAdapter<T> extends BaseAdapter{
-        protected List data = new ArrayList();
-        public void setData(List data) {
+    public abstract static class DragGridItemAdapter<T> extends BaseAdapter implements OnDragGridViewListener<T>{
+        protected List<T> data = new ArrayList();
+        ChannelDragGridView mChannelDragGridView;
+        public DragGridItemAdapter(ChannelDragGridView gridview){
+            this.mChannelDragGridView=gridview;
+        }
+        public ChannelDragGridView getChannelDragGridView(){
+            return mChannelDragGridView;
+        }
+
+        public void setData(List<T> data) {
             this.data = data;
         }
-        public List getData(){
+
+        public List<T> getData(){
             return data;
         }
 
+        @Override
+        public View getView(int position, View convertView, ViewGroup parent) {
+            return onBindView(mChannelDragGridView,mChannelDragGridView.getDragEnable(),convertView, (T) data.get(position),mChannelDragGridView.getItemState(position));
+        }
+
+        @Override
+        public int getCount() {
+            return data.size();
+        }
+
+        @Override
+        public T getItem(int i) {
+            return data.get(i);
+        }
 
         @Override
         public long getItemId(int i) {
@@ -669,47 +855,36 @@ public class ChannelDragGridView extends GridView {
         //itemview
         public View itemView;
 
-        //itemview状态
-        public int itemState;
+//        //itemview状态
+//        public int itemState=STATE_DRAG_ENABLE;
 
         //itemview对应的itemdata
         public T itemData;
+
+        //itemview的位置信息
+        public int itemViewPosition;
     }
 
     /**
-     * 正在拖动的DragingGridItem
+     * DragGridView的各种状态监听
      *
      */
-    public class DragingGridItem implements Serializable {
-        //拖动的itemview
-        public View mDragGridItemView;
-        //拖动的itemview 的position
-        public int mDragGridItemViewPosition=CODE_UNKNOW;
-        //原始位置的getleft
-        public int left;
-        //原始位置的gettop
-        public int top;
-    }
-
-    /**
-     * viewgroup控件在可拖动与不可拖动直接切换时触发的listener
-     */
-    public interface OnDragEnableListener{
-        /**
-         *
-         * @param dragEnable
-         */
+    public interface OnDragGridViewListener<T>{
+        //开始选中拖拽item时触发
+        void onStartSelectItem(ChannelDragGridView channelDragGridView,int index,View itemDragView);
+        //最后放开拖拽item时触发
+        void onEndSelectItem(ChannelDragGridView channelDragGridView,int index,View itemDragView);
+        //DragGridView控件在可拖动与不可拖动直接切换时触发的listener
         void onDragEnableListener(boolean dragEnable);
-    }
-
-    /**
-     * 选中item的滑动状态的监听
-     *
-     */
-    public interface OnItemDragListener{
-        void onStartSelectItem(int dragitemindex);
-        void onMoveItem(int dragitemindex,int targetindex);
-        void onEndMoveItem(int dragitemindex,int targetindex);
+        /**
+         * 设置每一个item对应的view
+         * @param channelDragGridView
+         * @param dragEnable
+         * @param itemData
+         * @param state
+         * @return
+         */
+        View onBindView(ChannelDragGridView channelDragGridView,boolean dragEnable,View itemView,T itemData, int state);
     }
     /**=====================================内部类及接口end==================================*/
 
