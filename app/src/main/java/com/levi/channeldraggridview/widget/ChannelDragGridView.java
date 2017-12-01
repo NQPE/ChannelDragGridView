@@ -725,13 +725,37 @@ public class ChannelDragGridView<T> extends GridView {
     public void addItem(T item){
         mAdapter.getData().add(item);
         mAdapter.notifyDataSetChanged();
-
     }
+//    public void addItem(int index,T item){
+//        mAdapter.getData().add(index,item);
+//        mAdapter.notifyDataSetChanged();
+//    }
 
     public Point getPointByPosition(int position){
         Point point=new Point();
+        final int[] location = new int[2];
+        getLocationOnScreen(location);
+        if (mDragingGridXYPosition!=null&&mDragingGridXYPosition.size()>position){
+            point.x=location[0]+mDragingGridXYPosition.get(position).x;
+            point.y=location[1]+mDragingGridXYPosition.get(position).y;
+            return point;
+        }
 
+        if (position==0){
+            point.x=location[0]+10;
+            point.y=location[1]+10;
+            return point;
+        }
+        int col=getNumColumns();
+        int row=position/col;
+        int mod=position%col;
+        point.x=mDragingGridXYPosition.get(0).x+mod*mItemWidth+location[0];
+        point.y=mDragingGridXYPosition.get(0).y+row*mItemHeight+location[1];
         return point;
+    }
+
+    public Point getLastPlusOnePoint(){
+        return getPointByPosition(getChildCount());
     }
 
     public void removeItem(final View itemView){
@@ -767,7 +791,8 @@ public class ChannelDragGridView<T> extends GridView {
         handlerMoveAnimation.sendMessageDelayed(msg,0);
     }
 
-    public void removeItemAnim(final View itemView,int x, int y){
+    public void removeItemAnim(final View itemView, int x, int y, final OnAnimatorListener listener){
+        Log.i(TAG, "removeItemAnim: x="+x+" y="+y);
         final T t=getItemDataByView(itemView);
         final int overlapPosition=mItemDragViewDatas.size()-1;
         final int itemPosition=getOverlapPosition(itemView);
@@ -779,6 +804,9 @@ public class ChannelDragGridView<T> extends GridView {
                 if (t!=null){
                     mAdapter.getData().remove(t);
                     mAdapter.notifyDataSetChanged();
+                }
+                if (listener!=null){
+                    listener.onAnimatorEndListener(animation);
                 }
 
             }
@@ -875,7 +903,7 @@ public class ChannelDragGridView<T> extends GridView {
         //最后放开拖拽item时触发
         void onEndSelectItem(ChannelDragGridView channelDragGridView,int index,View itemDragView);
         //DragGridView控件在可拖动与不可拖动直接切换时触发的listener
-        void onDragEnableListener(boolean dragEnable);
+//        void onDragEnableListener(boolean dragEnable);
         /**
          * 设置每一个item对应的view
          * @param channelDragGridView
@@ -885,6 +913,10 @@ public class ChannelDragGridView<T> extends GridView {
          * @return
          */
         View onBindView(ChannelDragGridView channelDragGridView,boolean dragEnable,View itemView,T itemData, int state);
+    }
+
+    public interface OnAnimatorListener{
+        void onAnimatorEndListener(Animator animation);
     }
     /**=====================================内部类及接口end==================================*/
 

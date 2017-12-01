@@ -1,5 +1,7 @@
 package com.levi.channeldraggridview.activity;
 
+import android.animation.Animator;
+import android.graphics.Point;
 import android.os.Bundle;
 import android.support.annotation.Nullable;
 import android.support.v7.app.AppCompatActivity;
@@ -44,12 +46,15 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         tv_change = (TextView) findViewById(R.id.tv_change);
         tv_add.setOnClickListener(this);
         tv_change.setOnClickListener(this);
+
         myAdapter=new MyAdapter(draggridview);
-        otherAdapter=new OtherAdapter(other_draggridview);
         draggridview.setNumColumns(3);
-        other_draggridview.setNumColumns(3);
         draggridview.setDragEnable(false);
         draggridview.setAdapter(myAdapter);
+
+        otherAdapter=new OtherAdapter(other_draggridview);
+        other_draggridview.setNumColumns(3);
+        other_draggridview.setDragEnable(false);
         other_draggridview.setAdapter(otherAdapter);
     }
 
@@ -88,7 +93,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         public String title;
     }
 
-    public static class MyAdapter extends ChannelDragGridView.DragGridItemAdapter {
+    public class MyAdapter extends ChannelDragGridView.DragGridItemAdapter {
 
         public MyAdapter(ChannelDragGridView gridview) {
             super(gridview);
@@ -105,12 +110,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         }
 
         @Override
-        public void onDragEnableListener(boolean dragEnable) {
-
-        }
-
-        @Override
-        public View onBindView(final ChannelDragGridView channelDragGridView, final boolean dragEnable,View itemView, Object itemData, int state) {
+        public View onBindView(final ChannelDragGridView channelDragGridView, final boolean dragEnable, View itemView, final Object itemData, int state) {
             if (itemView==null){
                 itemView = LayoutInflater.from(channelDragGridView.getContext()).inflate(R.layout.item_draggridview_test, null);
             }
@@ -124,7 +124,13 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 @Override
                 public void onClick(View v) {
                     if (dragEnable){
-                        getChannelDragGridView().removeItemAnim(finalItemView,500,1000);
+                        Point point=other_draggridview.getLastPlusOnePoint();
+                        getChannelDragGridView().removeItemAnim(finalItemView, point.x, point.y, new ChannelDragGridView.OnAnimatorListener() {
+                            @Override
+                            public void onAnimatorEndListener(Animator animation) {
+                                other_draggridview.addItem(itemData);
+                            }
+                        });
                         return;
                     }
                     Toast.makeText(v.getContext(),tv_item.getText(),Toast.LENGTH_SHORT).show();
@@ -141,20 +147,11 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         }
 
     }
-    public static class OtherAdapter extends ChannelDragGridView.DragGridItemAdapter {
+
+    public class OtherAdapter extends ChannelDragGridView.DragGridItemAdapter {
 
         public OtherAdapter(ChannelDragGridView gridview) {
             super(gridview);
-        }
-
-        @Override
-        public int getCount() {
-            return data.size();
-        }
-
-        @Override
-        public Object getItem(int i) {
-            return data.get(i);
         }
 
         @Override
@@ -168,40 +165,31 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         }
 
         @Override
-        public void onDragEnableListener(boolean dragEnable) {
-
-        }
-
-        @Override
-        public View onBindView(ChannelDragGridView channelDragGridView, boolean dragEnable,View itemView, Object itemData, int state) {
-            return null;
-        }
-
-        //在外面先定义，ViewHolder静态类
-        static class ViewHolder {
-            public ImageView iv_del;
-            public TextView tv_item;
-        }
-
-        //然后重写getView
-        @Override
-        public View getView(int position, View convertView, ViewGroup parent) {
-//            Log.i(TAG, "OtherAdapter getView position=="+position);
-            ViewHolder holder;
-            if (convertView == null) {
-                holder = new ViewHolder();
-                convertView = LayoutInflater.from(parent.getContext()).inflate(R.layout.item_draggridview_test, null);
-                holder.iv_del = (ImageView) convertView.findViewById(R.id.iv_del);
-                holder.tv_item = (TextView) convertView.findViewById(R.id.tv_item);
-                convertView.setTag(holder);
-            } else {
-                holder = (ViewHolder) convertView.getTag();
+        public View onBindView(final ChannelDragGridView channelDragGridView, final boolean dragEnable, View itemView, final Object itemData, int state) {
+            if (itemView==null){
+                itemView = LayoutInflater.from(channelDragGridView.getContext()).inflate(R.layout.item_draggridview_test, null);
             }
-            holder.tv_item.setText(((Item)getItem(position)).title);
-
-            return convertView;
+            Log.i(TAG, "OtherAdapter onBindView: "+((Item)itemData).title);
+            ImageView iv_del = (ImageView) itemView.findViewById(R.id.iv_del);
+            final TextView tv_item = (TextView) itemView.findViewById(R.id.tv_item);
+            iv_del.setVisibility(dragEnable?View.VISIBLE:View.INVISIBLE);
+            tv_item.setText(((Item)itemData).title);
+            final View finalItemView = itemView;
+            tv_item.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    Point point=draggridview.getLastPlusOnePoint();
+                    getChannelDragGridView().removeItemAnim(finalItemView, point.x, point.y, new ChannelDragGridView.OnAnimatorListener() {
+                        @Override
+                        public void onAnimatorEndListener(Animator animation) {
+                            draggridview.addItem(itemData);
+                        }
+                    });
+                    Toast.makeText(v.getContext(),tv_item.getText(),Toast.LENGTH_SHORT).show();
+                }
+            });
+            return itemView;
         }
-
 
     }
 }
